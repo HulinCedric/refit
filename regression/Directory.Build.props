@@ -1,0 +1,23 @@
+<Project>
+
+  <!--
+    This file deliberately defines NO <Import> of a parent Directory.Build.props.
+    MSBuild stops walking up the directory tree at the first Directory.Build.props
+    it finds, so placing this here fully isolates the regression projects from
+    src/Directory.Build.props (strict analyzers, doc-gen, MinVer, signing) and
+    src/global.json (Microsoft.Testing.Platform runner). These are plain xUnit v2
+    projects driven by a normal `dotnet test`.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- These are demonstration projects, not production code. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>
