@@ -453,6 +453,19 @@ internal static partial class RequestExecutionHelpers
                         .ConfigureAwait(false)
                     : default;
         }
+        catch (ResponseBodyReadException bodyReadFailure)
+        {
+            var transportException = settings.TransportExceptionFactory(
+                request,
+                bodyReadFailure.InnerException ?? bodyReadFailure,
+                cancellationToken);
+            if (transportException is not ApiExceptionBase requestError)
+            {
+                throw Rethrow(transportException);
+            }
+
+            return ApiResponse.Create<T, TBody>(request, response, default, settings, requestError);
+        }
         catch (Exception ex)
         {
             exception = await CreateDeserializationExceptionAsync(request, response, settings, ex)
@@ -494,6 +507,14 @@ internal static partial class RequestExecutionHelpers
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (ResponseBodyReadException bodyReadFailure)
+        {
+            var transportException = settings.TransportExceptionFactory(
+                request,
+                bodyReadFailure.InnerException ?? bodyReadFailure,
+                cancellationToken);
+            throw transportException is ApiExceptionBase ? transportException : Rethrow(transportException);
         }
         catch (Exception ex)
         {
@@ -619,6 +640,7 @@ internal static partial class RequestExecutionHelpers
     /// <param name="settings">The Refit settings to use.</param>
     /// <param name="cancellationToken">A token to cancel the read.</param>
     /// <returns>The deserialized value, or default when there is no content.</returns>
+    /// <exception cref="ResponseBodyReadException">Thrown when the body could not be downloaded and could not be read afterwards.</exception>
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
         "Design",
         "SST2307:Generic method type parameters should be inferable from the parameters",
@@ -636,47 +658,59 @@ internal static partial class RequestExecutionHelpers
             return default;
         }
 
-        await TryBufferContentAsync(content, cancellationToken).ConfigureAwait(false);
+        var bufferingFailure = await TryBufferContentAsync(content, cancellationToken).ConfigureAwait(false);
 
+        try
+        {
 #if NET8_0_OR_GREATER
-        return GeneratedRequestRunner.GetRequestJsonTypeInfo<T>(request) is { } typeInfo
-            ? await GeneratedRequestRunner.RequireJsonTypeInfoSerializer(settings)
-                .FromHttpContentAsync(content, typeInfo, cancellationToken)
-                .ConfigureAwait(false)
-            : await settings.ContentSerializer
+            return GeneratedRequestRunner.GetRequestJsonTypeInfo<T>(request) is { } typeInfo
+                ? await GeneratedRequestRunner.RequireJsonTypeInfoSerializer(settings)
+                    .FromHttpContentAsync(content, typeInfo, cancellationToken)
+                    .ConfigureAwait(false)
+                : await settings.ContentSerializer
+                    .FromHttpContentAsync<T>(content, cancellationToken)
+                    .ConfigureAwait(false);
+#else
+            _ = request;
+            return await settings.ContentSerializer
                 .FromHttpContentAsync<T>(content, cancellationToken)
                 .ConfigureAwait(false);
-#else
-        _ = request;
-        return await settings.ContentSerializer
-            .FromHttpContentAsync<T>(content, cancellationToken)
-            .ConfigureAwait(false);
 #endif
+        }
+        catch (Exception) when (bufferingFailure is not null && !cancellationToken.IsCancellationRequested)
+        {
+            // The body could not be downloaded: report that failure rather than the read that followed it.
+            throw new ResponseBodyReadException(bufferingFailure.Message, bufferingFailure);
+        }
     }
 
-    /// <summary>Attempts to buffer content into memory, ignoring buffering failures but honouring cancellation.</summary>
+    /// <summary>Attempts to buffer content into memory, keeping a buffering failure but honouring cancellation.</summary>
     /// <param name="content">The content to buffer.</param>
     /// <param name="cancellationToken">A token to cancel buffering.</param>
-    /// <returns>A task that completes once buffering has been attempted.</returns>
+    /// <returns>The exception that made buffering fail, or <see langword="null"/> when buffering succeeded.</returns>
     /// <exception cref="OperationCanceledException">Thrown when the caller cancelled while buffering.</exception>
     /// <remarks>
-    /// Buffering is best-effort: a failure just means the serializer reads the live stream instead. Cancellation is
-    /// not, because continuing would hand the serializer partially consumed content. The check sits after the catch
-    /// rather than in a filter on it, so it also covers the targets whose <c>LoadIntoBufferAsync</c> polyfill drops
-    /// the token and therefore never throws.
+    /// Buffering is best-effort: after a failure the serializer still reads the content, which works for content that
+    /// can be read again. Content received from the network cannot: the failed buffering has already consumed it, so
+    /// the failure is returned for the caller to report when that read fails too. Cancellation is not best-effort,
+    /// because continuing would hand the serializer partially consumed content. The check sits after the catch rather
+    /// than in a filter on it, so it also covers the targets whose <c>LoadIntoBufferAsync</c> polyfill drops the token
+    /// and therefore never throws.
     /// </remarks>
-    internal static async Task TryBufferContentAsync(HttpContent content, CancellationToken cancellationToken)
+    internal static async Task<Exception?> TryBufferContentAsync(HttpContent content, CancellationToken cancellationToken)
     {
+        Exception? bufferingFailure = null;
         try
         {
             await content.LoadIntoBufferAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception bufferingException)
+        catch (Exception exception)
         {
-            _ = bufferingException;
+            bufferingFailure = exception;
         }
 
         cancellationToken.ThrowIfCancellationRequested();
+        return bufferingFailure;
     }
 
     /// <summary>The outcome of attempting to send a request.</summary>

@@ -16,6 +16,13 @@ in the [main README](../README.md).
 
 ### Breaking changes in V16.x
 
+* **A failure while downloading the response body is reported as a transport error.** When the connection fails after
+  the headers arrived and the content cannot be read again, Refit used to discard the failure and report `ApiException`
+  "An error occured deserializing the response." with an inner `InvalidOperationException` ("The stream was already
+  consumed"). It now reports the failure through `RefitSettings.TransportExceptionFactory`, like a failure while
+  sending: a method returning `Task<T>` throws `ApiRequestException` with the transport exception as inner exception,
+  and an `ApiResponse<T>` carries it as `Error` (`HasRequestError` is `true`). `DeserializationExceptionFactory` is not
+  called in this case. Content that can still be read after a failed buffering is deserialized as before.
 * **The .NET 11 assemblies are built without runtime-async.** Refit 12.0.0 to 15.2.0 built the .NET 11 assemblies with
   the runtime-async compiler feature on. The feature needs a runtime that supports it: CoreCLR does and Mono does not, so
   a Refit built with it can fail in every app that runs on Mono, which includes Blazor WebAssembly unless it opts into

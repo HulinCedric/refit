@@ -5,10 +5,11 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Refit;
 
-/// <summary>Represents an error that occurred while sending an API request before a response could be received from the server.</summary>
+/// <summary>Represents an error that occurred while sending an API request, or while receiving its response body, so that no complete response could be received from the server.</summary>
 /// <remarks>
 /// This exception will wrap those thrown by <see cref="HttpClient.SendAsync(HttpRequestMessage)"/>,
-/// such as <see cref="HttpRequestException"/> and <see cref="OperationCanceledException"/>.
+/// such as <see cref="HttpRequestException"/> and <see cref="OperationCanceledException"/>, and those that
+/// stop the response body from downloading, such as a connection reset.
 /// </remarks>
 [System.Diagnostics.DebuggerDisplay("{ToString(),nq}")]
 [SuppressMessage(
